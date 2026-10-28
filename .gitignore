@@ -1,0 +1,36 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Virtual envs
+.venv/
+venv/
+env/
+
+# Local data / runtime
+memory.db
+memory.db-wal
+memory.db-shm
+plugin_data/
+exports/
+backups/
+media/
+*.log
+
+# Local secrets
+.env
+.env.*
+*.local
+
+# Local handoff / private notes (not published)
+HANDOFF*.md
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

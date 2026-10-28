@@ -1,0 +1,16 @@
+name: astrbot_plugin_bbrsmemory_plugin
+display_name: BBR的记忆插件
+desc: 分层长期记忆：每天归档、按话题提炼、7/30 天迁移、按重要度过期，回答前检索注入；支持空闲记忆整理、一键迁移包、Markdown 出口。
+short_desc: 分层长期记忆与迁移包
+version: 1.0.4
+author: dsh
+repo: ""
+astrbot_version: ">=4.16,<5"
+support_platforms:
+  - aiocqhttp
+  - qq_official
+  - telegram
+  - discord
+  - lark
+  - wecom
+  - satori

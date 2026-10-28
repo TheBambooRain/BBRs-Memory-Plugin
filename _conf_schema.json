@@ -1,0 +1,254 @@
+{
+  "enabled": {
+    "description": "启用上下文记忆",
+    "type": "bool",
+    "default": true
+  },
+  "timezone": {
+    "description": "时区",
+    "type": "string",
+    "default": "Asia/Shanghai",
+    "hint": "用于判断“哪一天”和跑批时间，例如 Asia/Shanghai。"
+  },
+  "run_at": {
+    "description": "每日跑批时间",
+    "type": "string",
+    "default": "04:00",
+    "hint": "24 小时制 HH:MM。真正执行还要求最近若干分钟没有消息。"
+  },
+  "idle_minutes": {
+    "description": "空闲判定（分钟）",
+    "type": "int",
+    "default": 30,
+    "slider": {"min": 0, "max": 180, "step": 5},
+    "hint": "到点后，最近这么多分钟没有消息才执行；0 表示不等待空闲。"
+  },
+  "force_after_hours": {
+    "description": "强制跑批上限（小时）",
+    "type": "int",
+    "default": 6,
+    "slider": {"min": 0, "max": 24, "step": 1},
+    "hint": "到点后一直不空闲，超过这么久就强制跑；0 表示永不强制。"
+  },
+  "capture_assistant": {
+    "description": "保存机器人回复",
+    "type": "bool",
+    "default": true,
+    "hint": "关闭后只保存用户消息，话题提炼会缺少上下文。"
+  },
+  "ignore_prefixes": {
+    "description": "不写入记忆的消息前缀",
+    "type": "list",
+    "default": ["/", "#"],
+    "hint": "命令一般不需要进入长期记忆，例如 /mem、/reset。"
+  },
+  "summary_provider_id": {
+    "description": "用于提炼的模型提供商 ID",
+    "type": "string",
+    "default": "",
+    "hint": "留空使用当前会话模型；建议指定一个便宜且稳定的模型。"
+  },
+  "chunk_chars": {
+    "description": "单次提炼的最大字符数",
+    "type": "int",
+    "default": 12000,
+    "slider": {"min": 3000, "max": 30000, "step": 1000},
+    "hint": "一天消息过长时会分块调用模型。"
+  },
+  "summary_max_chars": {
+    "description": "单条周摘要最大字数",
+    "type": "int",
+    "default": 1200,
+    "slider": {"min": 400, "max": 3000, "step": 100}
+  },
+  "importance_min": {
+    "description": "重要度下限",
+    "type": "int",
+    "default": 1,
+    "slider": {"min": 1, "max": 50, "step": 1}
+  },
+  "importance_max": {
+    "description": "重要度上限",
+    "type": "int",
+    "default": 300,
+    "slider": {"min": 100, "max": 1000, "step": 10}
+  },
+  "ttl_unit_days": {
+    "description": "每点重要度对应天数",
+    "type": "float",
+    "default": 1.0,
+    "slider": {"min": 0.1, "max": 3.0, "step": 0.1},
+    "hint": "遗忘天数 = 重要度 × 本值，再按上下限截断。"
+  },
+  "ttl_min_days": {
+    "description": "遗忘天数下限",
+    "type": "int",
+    "default": 2,
+    "slider": {"min": 1, "max": 30, "step": 1}
+  },
+  "ttl_max_days": {
+    "description": "遗忘天数上限",
+    "type": "int",
+    "default": 365,
+    "slider": {"min": 30, "max": 3650, "step": 10}
+  },
+  "promote_week_days": {
+    "description": "周记忆转月记忆（天）",
+    "type": "int",
+    "default": 7,
+    "slider": {"min": 3, "max": 30, "step": 1}
+  },
+  "promote_month_days": {
+    "description": "月记忆转年记忆（天）",
+    "type": "int",
+    "default": 30,
+    "slider": {"min": 30, "max": 365, "step": 5}
+  },
+  "max_promotions_per_run": {
+    "description": "每次跑批最多迁移条数",
+    "type": "int",
+    "default": 20,
+    "slider": {"min": 1, "max": 200, "step": 1},
+    "hint": "控制单次跑批的模型调用成本。"
+  },
+  "export_shard_rows": {
+    "description": "迁移包每片行数",
+    "type": "int",
+    "default": 50000,
+    "slider": {"min": 1000, "max": 200000, "step": 1000}
+  },
+  "retrieve_top_k": {
+    "description": "普通检索注入条数",
+    "type": "int",
+    "default": 4,
+    "slider": {"min": 0, "max": 10, "step": 1}
+  },
+  "deep_top_k": {
+    "description": "深度检索注入条数",
+    "type": "int",
+    "default": 8,
+    "slider": {"min": 1, "max": 20, "step": 1}
+  },
+  "inject_budget_chars": {
+    "description": "记忆注入字符预算",
+    "type": "int",
+    "default": 1200,
+    "slider": {"min": 300, "max": 4000, "step": 100}
+  },
+  "suppress_days": {
+    "description": "同一条记忆被动注入后的静默天数",
+    "type": "int",
+    "default": 7,
+    "slider": {"min": 0, "max": 60, "step": 1},
+    "hint": "减少模型反复提起同一段记忆。"
+  },
+  "relevance_min": {
+    "description": "普通检索的相关度门槛",
+    "type": "float",
+    "default": 0.12,
+    "slider": {"min": 0.0, "max": 1.0, "step": 0.01}
+  },
+  "renew_factor": {
+    "description": "被显式回忆时的续期倍率",
+    "type": "float",
+    "default": 1.3,
+    "slider": {"min": 1.0, "max": 2.0, "step": 0.1}
+  },
+  "max_renewals": {
+    "description": "单条记忆最多续期次数",
+    "type": "int",
+    "default": 3,
+    "slider": {"min": 0, "max": 20, "step": 1}
+  },
+  "expired_retention_days": {
+    "description": "过期后保留天数",
+    "type": "int",
+    "default": 30,
+    "slider": {"min": 0, "max": 365, "step": 1}
+  },
+  "raw_retention_days": {
+    "description": "原始消息保留天数",
+    "type": "int",
+    "default": 0,
+    "slider": {"min": 0, "max": 3650, "step": 30},
+    "hint": "0 表示永久保留；删除原文会导致无法从原文重做摘要。"
+  },
+  "admin_only": {
+    "description": "仅管理员可执行记忆管理命令",
+    "type": "bool",
+    "default": true
+  },
+  "media_enabled": {
+    "description": "启用媒体转存（v0.2）",
+    "type": "bool",
+    "default": false,
+    "hint": "v0.1 只记录媒体引用，不下载、不转写。"
+  },
+  "media_dir": {
+    "description": "媒体目录",
+    "type": "string",
+    "default": "",
+    "hint": "留空使用插件数据目录下的 media/。"
+  },
+  "stt_provider_id": {
+    "description": "语音转写提供商 ID（v0.2）",
+    "type": "string",
+    "default": ""
+  },
+  "vision_provider_id": {
+    "description": "图片/表情包描述提供商 ID（v0.2）",
+    "type": "string",
+    "default": ""
+  },
+  "media_max_mb": {
+    "description": "单个媒体最大体积（MB）",
+    "type": "int",
+    "default": 20,
+    "slider": {"min": 1, "max": 200, "step": 1}
+  },
+  "media_retention_days": {
+    "description": "媒体保留天数（v0.2）",
+    "type": "int",
+    "default": 0,
+    "slider": {"min": 0, "max": 3650, "step": 30},
+    "hint": "0 表示永久保留。"
+  },
+  "wait_for_media": {
+    "description": "等待媒体处理完再提炼",
+    "type": "bool",
+    "default": false,
+    "hint": "开启后，当天有 pending 附件时推迟话题提炼。"
+  },
+  "reminder_backend": {
+    "description": "提醒调度后端",
+    "type": "string",
+    "default": "auto",
+    "options": ["auto", "memory", "future_task"],
+    "hint": "auto=有 future_task 时前置包装后交给它，否则写 outbox；memory=只用记忆 outbox；future_task=强制用 AstrBot 调度。"
+  },
+  "due_window_hours": {
+    "description": "到期提醒窗口（小时）",
+    "type": "int",
+    "default": 24,
+    "slider": {"min": 1, "max": 168, "step": 1},
+    "hint": "到期前多久开始进入注入队列。"
+  },
+  "due_max_per_turn": {
+    "description": "每轮最多注入几条到期项",
+    "type": "int",
+    "default": 3,
+    "slider": {"min": 1, "max": 10, "step": 1}
+  },
+  "due_budget_chars": {
+    "description": "到期提醒字符预算",
+    "type": "int",
+    "default": 300,
+    "slider": {"min": 100, "max": 1000, "step": 50}
+  },
+  "reminder_repeat_hours": {
+    "description": "同一提醒重复注入间隔（小时）",
+    "type": "int",
+    "default": 6,
+    "slider": {"min": 1, "max": 48, "step": 1}
+  }
+}
