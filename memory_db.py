@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 import threading
 import uuid
@@ -25,6 +26,11 @@ except ImportError:  # 离线测试 / 单文件加载
     from textutil import tokens_text
 
 SCHEMA_VERSION = 3
+
+
+def make_scope_id(key: str) -> str:
+    """稳定的 scope_id：同一个 key 在任何机器上得到同一个 UUID。"""
+    return uuid.uuid5(uuid.NAMESPACE_URL, f"bbrs-memory:scope:{key}").hex
 DEFAULT_TZ = "Asia/Shanghai"
 
 
@@ -161,6 +167,15 @@ CREATE TABLE IF NOT EXISTS session_bindings (
     bound_by TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS idx_bindings_scope ON session_bindings(scope_id);
+
+CREATE TABLE IF NOT EXISTS scope_aliases (
+    alias_key TEXT PRIMARY KEY,
+    scope_id TEXT NOT NULL,
+    note TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_aliases_scope ON scope_aliases(scope_id);
 
 CREATE TABLE IF NOT EXISTS message_attachments (
     id TEXT PRIMARY KEY,
@@ -328,6 +343,8 @@ class MemoryDB:
             self.conn.commit()
             self._backfill_scopes()
             self._repair_scopes()
+            self._repair_orphan_scopes()
+            self._migrate_scope_ids()
             self._migrate_v3()
             self._migrate_jobs_cursor()
 
@@ -481,6 +498,110 @@ class MemoryDB:
         self.conn.commit()
         self.set_meta("scope_repair_v3", "1")
 
+    def _repair_orphan_scopes(self) -> None:
+        """把只有 topic/item、没有消息的重复 scope 并回有消息的 scope。
+
+        v1.0.4 早期整理逻辑用 UMO 前缀（人格名）推平台，可能造出
+        platform='主人格'、messages=0 的空壳 scope。这里按 external_id + kind
+        找到唯一有消息的 scope，迁移 topics/items 后删掉空壳。
+        """
+        if self.get_meta("scope_orphan_repair_v4", "") == "1":
+            return
+        rows = self.conn.execute(
+            "SELECT s.*,"
+            " (SELECT count(*) FROM messages m WHERE m.scope_id=s.scope_id) AS msg_count,"
+            " (SELECT count(*) FROM topics t WHERE t.scope_id=s.scope_id) AS topic_count,"
+            " (SELECT count(*) FROM memory_items i WHERE i.scope_id=s.scope_id) AS item_count"
+            " FROM scopes s",
+        ).fetchall()
+        groups: dict[tuple[str, str], list[dict[str, Any]]] = {}
+        for row in rows:
+            scope = dict(row)
+            key = (str(scope.get("external_id") or ""), normalize_kind(str(scope.get("kind") or "")))
+            groups.setdefault(key, []).append(scope)
+        for _key, group in groups.items():
+            if len(group) < 2:
+                continue
+            with_messages = [s for s in group if int(s.get("msg_count", 0)) > 0]
+            if len(with_messages) != 1:
+                continue
+            target = with_messages[0]
+            for source in group:
+                if source["scope_id"] == target["scope_id"]:
+                    continue
+                if int(source.get("msg_count", 0)) > 0:
+                    continue
+                self.conn.execute(
+                    "UPDATE topics SET scope_id=? WHERE scope_id=?",
+                    (target["scope_id"], source["scope_id"]),
+                )
+                self.conn.execute(
+                    "UPDATE memory_items SET scope_id=? WHERE scope_id=?",
+                    (target["scope_id"], source["scope_id"]),
+                )
+                self.conn.execute(
+                    "UPDATE OR IGNORE session_bindings SET scope_id=? WHERE scope_id=?",
+                    (target["scope_id"], source["scope_id"]),
+                )
+                self.conn.execute(
+                    "DELETE FROM session_bindings WHERE scope_id=?",
+                    (source["scope_id"],),
+                )
+                self.conn.execute(
+                    "DELETE FROM scopes WHERE scope_id=?",
+                    (source["scope_id"],),
+                )
+        self.conn.commit()
+        self.set_meta("scope_orphan_repair_v4", "1")
+
+    def _migrate_scope_ids(self) -> None:
+        """把旧随机 scope_id 改成 uuid5(UMO)。
+
+        只处理“消息只对应一个 UMO”的 scope；绑定/多会话共享的 scope
+        保留原 ID，避免破坏已有映射。
+        """
+        if self.get_meta("scope_uuid5_v5", "") == "1":
+            return
+        rows = self.conn.execute(
+            "SELECT s.scope_id, COUNT(DISTINCT m.umo) AS umo_count,"
+            " MIN(m.umo) AS umo FROM scopes s"
+            " JOIN messages m ON m.scope_id=s.scope_id"
+            " GROUP BY s.scope_id",
+        ).fetchall()
+        for row in rows:
+            old_id = str(row["scope_id"])
+            if not re.fullmatch(r"[0-9a-f]{32}", old_id):
+                continue
+            if int(row["umo_count"] or 0) != 1:
+                continue
+            umo = str(row["umo"] or "")
+            if not umo:
+                continue
+            new_id = make_scope_id(umo)
+            if new_id == old_id:
+                continue
+            if self.conn.execute(
+                "SELECT 1 FROM scopes WHERE scope_id=?", (new_id,),
+            ).fetchone():
+                continue
+            for table in (
+                "messages",
+                "topics",
+                "memory_items",
+                "session_bindings",
+                "scope_aliases",
+            ):
+                self.conn.execute(
+                    f"UPDATE {table} SET scope_id=? WHERE scope_id=?",
+                    (new_id, old_id),
+                )
+            self.conn.execute(
+                "UPDATE scopes SET scope_id=?, updated_at=? WHERE scope_id=?",
+                (new_id, to_iso(utc_now()), old_id),
+            )
+        self.conn.commit()
+        self.set_meta("scope_uuid5_v5", "1")
+
     def _init_fts(self) -> bool:
         try:
             with self._lock:
@@ -597,24 +718,44 @@ class MemoryDB:
         external_id: str | None = None,
         label: str = "",
         create: bool = True,
+        binding_key: str | None = None,
+        alias_key: str | None = None,
+        scope_id: str | None = None,
     ) -> str:
-        """当前会话 → scope_id：先看绑定，再按 platform/kind/external_id 找默认 scope。"""
+        """当前会话 → scope_id：绑定 > 别名 > 指定 scope > 默认三元组。"""
         umo = str(umo or "")
         p_umo, k_umo, e_umo = parse_umo(umo)
         platform = platform or p_umo
         kind = normalize_kind(kind or k_umo)
         external_id = str(external_id or e_umo)
+        key = str(binding_key or umo)
+        alias_key = str(alias_key or f"{platform}:{kind}:{external_id}")
 
         with self._lock:
             row = self.conn.execute(
                 "SELECT scope_id FROM session_bindings WHERE umo=?",
-                (umo,),
+                (key,),
             ).fetchone()
         if row:
             bound = self.get_scope(str(row["scope_id"]))
             # 防止手工导入/改库把私聊绑到群；类型不一致时退回默认 scope。
             if bound and normalize_kind(bound.get("kind")) == kind:
                 return str(row["scope_id"])
+
+        with self._lock:
+            row = self.conn.execute(
+                "SELECT scope_id FROM scope_aliases WHERE alias_key=?",
+                (alias_key,),
+            ).fetchone()
+        if row:
+            aliased = self.get_scope(str(row["scope_id"]))
+            if aliased and normalize_kind(aliased.get("kind")) == kind:
+                return str(row["scope_id"])
+
+        if scope_id:
+            explicit = self.get_scope(str(scope_id))
+            if explicit and normalize_kind(explicit.get("kind")) == kind:
+                return str(scope_id)
 
         if not create:
             with self._lock:
@@ -629,6 +770,7 @@ class MemoryDB:
             kind=kind,
             external_id=external_id,
             label=label,
+            scope_id=scope_id or make_scope_id(key),
         )
 
     def get_session_binding(self, umo: str) -> dict[str, Any] | None:
@@ -675,6 +817,52 @@ class MemoryDB:
             )
             self.conn.commit()
         return bool(cur.rowcount)
+
+    def get_scope_alias(self, alias_key: str) -> dict[str, Any] | None:
+        with self._lock:
+            row = self.conn.execute(
+                "SELECT * FROM scope_aliases WHERE alias_key=?",
+                (alias_key,),
+            ).fetchone()
+        return dict(row) if row else None
+
+    def set_scope_alias(
+        self,
+        alias_key: str,
+        scope_id: str,
+        *,
+        note: str = "",
+    ) -> bool:
+        if not self.get_scope(scope_id):
+            return False
+        now = to_iso(utc_now())
+        with self._lock:
+            self.conn.execute(
+                "INSERT INTO scope_aliases(alias_key, scope_id, note, created_at, updated_at)"
+                " VALUES(?,?,?,?,?) ON CONFLICT(alias_key) DO UPDATE SET"
+                " scope_id=excluded.scope_id, note=excluded.note,"
+                " updated_at=excluded.updated_at",
+                (alias_key, scope_id, note, now, now),
+            )
+            self.conn.commit()
+        return True
+
+    def delete_scope_alias(self, alias_key: str) -> bool:
+        with self._lock:
+            cur = self.conn.execute(
+                "DELETE FROM scope_aliases WHERE alias_key=?",
+                (alias_key,),
+            )
+            self.conn.commit()
+        return bool(cur.rowcount)
+
+    def list_scope_aliases(self, limit: int = 200) -> list[dict[str, Any]]:
+        with self._lock:
+            rows = self.conn.execute(
+                "SELECT * FROM scope_aliases ORDER BY updated_at DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+        return [dict(r) for r in rows]
 
     def get_scope(self, scope_id: str) -> dict[str, Any] | None:
         with self._lock:
@@ -1730,6 +1918,37 @@ class MemoryDB:
                         scope_id,
                         row.get("bound_at", to_iso(utc_now())),
                         row.get("bound_by", ""),
+                    ),
+                )
+                count += cur.rowcount
+        return count
+
+    def import_scope_aliases(
+        self,
+        rows: Iterable[dict[str, Any]],
+        scope_map: dict[str, str] | None = None,
+    ) -> int:
+        """导入群聊 scope 映射；默认不覆盖本地已有 alias。"""
+        scope_map = scope_map or {}
+        count = 0
+        with self._lock, self.conn:
+            for row in rows:
+                alias_key = str(row.get("alias_key") or "")
+                scope_id = str(row.get("scope_id") or "")
+                scope_id = scope_map.get(scope_id, scope_id)
+                if not alias_key or not scope_id or not self.get_scope(scope_id):
+                    continue
+                now = to_iso(utc_now())
+                cur = self.conn.execute(
+                    "INSERT OR IGNORE INTO scope_aliases"
+                    "(alias_key, scope_id, note, created_at, updated_at)"
+                    " VALUES(?,?,?,?,?)",
+                    (
+                        alias_key,
+                        scope_id,
+                        row.get("note", ""),
+                        row.get("created_at", now),
+                        row.get("updated_at", now),
                     ),
                 )
                 count += cur.rowcount

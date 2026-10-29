@@ -26,6 +26,7 @@ from memory_db import (  # noqa: E402
     MemoryDB,
     compute_expire_at,
     compute_ttl_days,
+    make_scope_id,
     make_timezone,
 )
 from migration import export_bundle, import_bundle  # noqa: E402
@@ -274,6 +275,49 @@ class MemoryCoreTest(unittest.TestCase):
                 deep=True,
             ),
             [],
+        )
+
+    def test_deterministic_scope_id(self) -> None:
+        key = "aiocqhttp:FriendMessage:10001"
+        scope_id = self.db.resolve_scope(
+            key,
+            platform="aiocqhttp",
+            kind="private",
+            external_id="10001",
+            binding_key=key,
+        )
+        self.assertEqual(scope_id, make_scope_id(key))
+
+    def test_scope_alias(self) -> None:
+        target = self.db.ensure_scope(
+            platform="qq_official", kind="group", external_id="10001",
+        )
+        self.db.ensure_scope(
+            platform="myapp", kind="group", external_id="20002",
+        )
+        self.assertTrue(
+            self.db.set_scope_alias("myapp:group:20002", target, note="迁移"),
+        )
+        self.assertEqual(
+            self.db.resolve_scope(
+                "myapp:group:20002",
+                platform="myapp",
+                kind="group",
+                external_id="20002",
+                alias_key="myapp:group:20002",
+            ),
+            target,
+        )
+        self.assertTrue(self.db.delete_scope_alias("myapp:group:20002"))
+        self.assertNotEqual(
+            self.db.resolve_scope(
+                "myapp:group:20002",
+                platform="myapp",
+                kind="group",
+                external_id="20002",
+                alias_key="myapp:group:20002",
+            ),
+            target,
         )
 
     def test_archived_and_due_queue(self) -> None:

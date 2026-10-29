@@ -373,7 +373,16 @@ class Consolidator:
         messages = self.db.get_messages_for_day(day, umo, after_id=after_id)
         if not messages:
             return 0
-        scope_id = self.db.resolve_scope(umo)
+        scope_id = next(
+            (str(msg.get("scope_id")) for msg in messages if msg.get("scope_id")),
+            "",
+        )
+        if not scope_id:
+            platform = next(
+                (str(msg.get("platform")) for msg in messages if msg.get("platform")),
+                None,
+            )
+            scope_id = self.db.resolve_scope(umo, platform=platform)
         now = self.now_fn().astimezone(timezone.utc)
         external_reminders = bool(self.external_reminders(umo))
         attachments: dict[str, list[dict[str, Any]]] = {}

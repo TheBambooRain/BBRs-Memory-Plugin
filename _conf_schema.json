@@ -226,6 +226,12 @@
     "options": ["auto", "memory", "future_task"],
     "hint": "auto=有 future_task 时前置包装后交给它，否则写 outbox；memory=只用记忆 outbox；future_task=强制用 AstrBot 调度。"
   },
+  "scope_resolver": {
+    "description": "自定义 scope 适配器",
+    "type": "string",
+    "default": "scope_adapter.py",
+    "hint": "放在插件数据目录；文件里定义 resolve_scope(ctx)。留空或文件不存在则用内置 AstrBot 逻辑。"
+  },
   "due_window_hours": {
     "description": "到期提醒窗口（小时）",
     "type": "int",

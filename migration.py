@@ -27,7 +27,7 @@ except ImportError:  # 离线测试
     from textutil import slugify
 
 BUNDLE_FORMAT = "astrbot-memory-bundle"
-PLUGIN_VERSION = "1.0.4"
+PLUGIN_VERSION = "1.0.5"
 SCHEMA_VERSION = 3
 
 
@@ -246,12 +246,17 @@ def export_bundle(
             conn, "session_bindings", temp_dir / "bindings",
             max(1000, rows_per // 5), "umo", None,
         )
+        shards["aliases"] = _write_shards(
+            conn, "scope_aliases", temp_dir / "aliases",
+            max(1000, rows_per // 5), "alias_key", None,
+        )
 
         counts = {
             "scopes": conn.execute("SELECT count(*) FROM scopes").fetchone()[0],
             "bindings": conn.execute(
                 "SELECT count(*) FROM session_bindings",
             ).fetchone()[0],
+            "aliases": conn.execute("SELECT count(*) FROM scope_aliases").fetchone()[0],
             "messages": conn.execute("SELECT count(*) FROM messages").fetchone()[0],
             "topics": conn.execute("SELECT count(*) FROM topics").fetchone()[0],
             "items": conn.execute("SELECT count(*) FROM memory_items").fetchone()[0],
@@ -349,6 +354,7 @@ def import_bundle(
     stats = {
         "scopes": 0,
         "bindings": 0,
+        "aliases": 0,
         "messages": 0,
         "topics": 0,
         "items": 0,
@@ -459,6 +465,15 @@ def import_bundle(
                 batch.append(row)
         if batch:
             stats["bindings"] += db.import_bindings(batch, scope_map=scope_map)
+
+        batch = []
+        for member in members("aliases", "aliases"):
+            if member not in names:
+                continue
+            for row in _iter_zip_jsonl(zf, member):
+                batch.append(row)
+        if batch:
+            stats["aliases"] += db.import_scope_aliases(batch, scope_map=scope_map)
 
         if media_dir is not None:
             target_root = Path(media_dir).resolve()
